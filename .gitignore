@@ -1,0 +1,31 @@
+# AWS
+*.pem
+.aws/
+
+# Sensitive files - DO NOT COMMIT
+infrastructure/pipeline-parameters.json
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Terraform (if used later)
+*.tfstate
+*.tfstate.backup
+.terraform/
+
+# Logs
+*.log
+
+# kubectl binary
+kubectl.exe

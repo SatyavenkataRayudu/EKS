@@ -1,0 +1,203 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Amazon EKS cluster with managed node group'
+
+Parameters:
+  ClusterName:
+    Type: String
+    Default: kiro-eks-cluster
+    Description: Name of the EKS cluster
+
+  KubernetesVersion:
+    Type: String
+    Default: '1.28'
+    Description: Kubernetes version
+
+  NodeInstanceType:
+    Type: String
+    Default: t3.medium
+    Description: EC2 instance type for worker nodes
+
+  NodeGroupDesiredCapacity:
+    Type: Number
+    Default: 2
+    Description: Desired number of worker nodes
+
+  NodeGroupMinSize:
+    Type: Number
+    Default: 1
+    Description: Minimum number of worker nodes
+
+  NodeGroupMaxSize:
+    Type: Number
+    Default: 4
+    Description: Maximum number of worker nodes
+
+Resources:
+  # EKS Cluster IAM Role
+  EKSClusterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: kiro-eks-cluster-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: eks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+        - arn:aws:iam::aws:policy/AmazonEKSVPCResourceController
+
+  # EKS Cluster Security Group
+  EKSClusterSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for EKS cluster
+      VpcId: !ImportValue kiro-eks-vpc-id
+      Tags:
+        - Key: Name
+          Value: kiro-eks-cluster-sg
+
+  # EKS Cluster
+  EKSCluster:
+    Type: AWS::EKS::Cluster
+    Properties:
+      Name: !Ref ClusterName
+      Version: !Ref KubernetesVersion
+      RoleArn: !GetAtt EKSClusterRole.Arn
+      ResourcesVpcConfig:
+        SecurityGroupIds:
+          - !Ref EKSClusterSecurityGroup
+        SubnetIds:
+          - !ImportValue kiro-eks-public-subnet-1
+          - !ImportValue kiro-eks-public-subnet-2
+          - !ImportValue kiro-eks-private-subnet-1
+          - !ImportValue kiro-eks-private-subnet-2
+        EndpointPublicAccess: true
+        EndpointPrivateAccess: true
+      Tags:
+        - Key: Name
+          Value: !Ref ClusterName
+
+  # Node Group IAM Role
+  NodeGroupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: kiro-eks-nodegroup-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+        - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  # Additional policy for ECR access
+  NodeGroupECRPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: kiro-eks-ecr-policy
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - ecr:GetAuthorizationToken
+              - ecr:BatchCheckLayerAvailability
+              - ecr:GetDownloadUrlForLayer
+              - ecr:BatchGetImage
+            Resource: '*'
+      Roles:
+        - !Ref NodeGroupRole
+
+  # EKS Node Group
+  NodeGroup:
+    Type: AWS::EKS::Nodegroup
+    DependsOn: EKSCluster
+    Properties:
+      ClusterName: !Ref ClusterName
+      NodegroupName: kiro-eks-nodegroup
+      NodeRole: !GetAtt NodeGroupRole.Arn
+      Subnets:
+        - !ImportValue kiro-eks-private-subnet-1
+        - !ImportValue kiro-eks-private-subnet-2
+      ScalingConfig:
+        DesiredSize: !Ref NodeGroupDesiredCapacity
+        MinSize: !Ref NodeGroupMinSize
+        MaxSize: !Ref NodeGroupMaxSize
+      InstanceTypes:
+        - !Ref NodeInstanceType
+      AmiType: AL2_x86_64
+      Tags:
+        Name: kiro-eks-nodegroup
+
+  # OIDC Provider for IRSA
+  EKSClusterOIDCProvider:
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      Url: !GetAtt EKSCluster.OpenIdConnectIssuerUrl
+      ClientIdList:
+        - sts.amazonaws.com
+      ThumbprintList:
+        - 9e99a48a9960b14926bb7f3b02e22da2b0ab7280
+
+  # Service Account Role for CodeBuild
+  CodeBuildServiceAccountRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: kiro-eks-codebuild-sa-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Ref EKSClusterOIDCProvider
+            Action: sts:AssumeRoleWithWebIdentity
+      Policies:
+        - PolicyName: eks-deployment-policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - eks:DescribeCluster
+                Resource: !GetAtt EKSCluster.Arn
+
+Outputs:
+  ClusterName:
+    Description: EKS Cluster Name
+    Value: !Ref EKSCluster
+    Export:
+      Name: kiro-eks-cluster-name
+
+  ClusterArn:
+    Description: EKS Cluster ARN
+    Value: !GetAtt EKSCluster.Arn
+    Export:
+      Name: kiro-eks-cluster-arn
+
+  ClusterEndpoint:
+    Description: EKS Cluster Endpoint
+    Value: !GetAtt EKSCluster.Endpoint
+    Export:
+      Name: kiro-eks-cluster-endpoint
+
+  NodeGroupName:
+    Description: Node Group Name
+    Value: !Ref NodeGroup
+
+  NodeGroupRole:
+    Description: Node Group IAM Role ARN
+    Value: !GetAtt NodeGroupRole.Arn
+
+  OIDCProviderArn:
+    Description: OIDC Provider ARN
+    Value: !Ref EKSClusterOIDCProvider
+    Export:
+      Name: kiro-eks-oidc-provider-arn
