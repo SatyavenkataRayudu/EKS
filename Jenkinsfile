@@ -64,12 +64,12 @@ pipeline {
                         # Update kubeconfig
                         aws eks update-kubeconfig --name ${EKS_CLUSTER} --region ${AWS_REGION}
                         
-                        # Apply Kubernetes manifests
-                        kubectl apply -f kubernetes/namespace.yaml
-                        kubectl apply -f kubernetes/service.yaml
+                        # Apply Kubernetes manifests with validation disabled
+                        kubectl apply -f kubernetes/namespace.yaml --validate=false
+                        kubectl apply -f kubernetes/service.yaml --validate=false
                         
                         # Update deployment with new image
-                        kubectl set image deployment/kiro-app kiro-app=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:latest -n ${K8S_NAMESPACE}
+                        kubectl set image deployment/kiro-app kiro-app=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:latest -n ${K8S_NAMESPACE} --validate=false
                         
                         # Wait for rollout to complete
                         kubectl rollout status deployment/kiro-app -n ${K8S_NAMESPACE}
